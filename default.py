@@ -97,6 +97,7 @@ while (username == "" or password == ""):
 
 
 def index():
+	xbmc.log(msg='index', level=xbmc.LOGDEBUG)
     if login():
         addDir(translation(30002), urlMain+"/MyList?leid=595&link=seeall", 'listVideos', "")
         addDir(translation(30010), "", 'listViewingActivity', "")
@@ -111,6 +112,7 @@ def index():
 
 
 def listVideos(url):
+	xbmc.log(msg='listVideos', level=xbmc.LOGDEBUG)
     if not singleProfile:
         setProfile()
     xbmcplugin.setContent(pluginhandle, "movies")
@@ -126,6 +128,7 @@ def listVideos(url):
             match2 = re.compile('<span class="title "><a id="b(.+?)_', re.DOTALL).findall(content)
             if match1:
                 for videoID, thumbUrl in match1:
+                	xbmc.log('VideoId:' + videoID + ', ThumbUrl:' + thumbUrl, xbmc.LOGDEBUG)
                     listVideo(videoID, "", thumbUrl, False, False)
             elif match2:
                 for videoID in match2:
