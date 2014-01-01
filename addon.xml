@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<addon id="plugin.video.andnetflixbmc" name="AndNetfliXBMC" version="0.1.0" provider-name="KevinMajlo">
+<addon id="plugin.video.andnetflixbmc" name="Netflix for Android" version="0.1.0" provider-name="KevinMajlo">
     <requires>
         <import addon="xbmc.python" version="2.1.0"/>
+        <import addon="script.module.parsedom" version="2.5.2"/>
     </requires>
     <extension point="xbmc.python.pluginsource" library="default.py">
         <provides>video</provides>
     </extension>
     <extension point="xbmc.addon.metadata">
-        <platform>android</platform>
+        <platform>all</platform>
         <summary lang="en">AndNetfliXBMC - Netflix for XBMC on Android</summary>
         <language></language>
         <description lang="en">Netflix for XBMC on Android</description>
