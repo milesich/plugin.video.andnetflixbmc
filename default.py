@@ -8,6 +8,7 @@ import re
 import os
 import json
 import time
+import subprocess
 import shutil
 import xbmcplugin
 import xbmcgui
@@ -15,15 +16,20 @@ import xbmcaddon
 
 dbg = True
 dbglevel = 5
+
+import mycookiejar
+
 pluginhandle = int(sys.argv[1])
 addon = xbmcaddon.Addon(id='plugin.video.andnetflixbmc')
 addonID = addon.getAddonInfo('id')
-cookiejar = cookielib.LWPCookieJar()
+#cookiejar = cookielib.LWPCookieJar()
+cookiejar = mycookiejar.MyCookieJar()
 opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cookiejar))
 
 import CommonFunctions
 common = CommonFunctions
 common.plugin = addon.getAddonInfo('name') + ' ' + addon.getAddonInfo('version')
+common.USERAGENT = "Mozilla/5.0 (Windows NT 5.1; rv:25.0) Gecko/20100101 Firefox/25.0"
 
 addonUserDataFolder = xbmc.translatePath("special://profile/addon_data/"+addonID)
 cookieFile = xbmc.translatePath("special://profile/addon_data/"+addonID+"/cookies")
@@ -68,7 +74,11 @@ if os.path.exists(cookieFile):
     cookiejar.load(cookieFile)
 if os.path.exists(authFile):
     fh = common.openFile(authFile, 'r')
-    auth = fh.read()
+    authUrl = fh.read()
+    fh.close()
+if os.path.exists(profileFile):
+    fh = common.openFile(profileFile, 'r')
+    profileName = fh.read()
     fh.close()
 
 
@@ -78,25 +88,17 @@ while (username == "" or password == ""):
     password = addon.getSetting("password")
 
 
-def translation(id):
-    return addon.getLocalizedString(id).encode('utf-8')
+# Actions
 
-
-def dialogError(title, message):
-    dialog = xbmcgui.Dialog()
-    dialog.ok(title, message[:53], message[53:110], message[110:])
-
-
-def dialogErrorResult(result, message):
-    result['content'] = '' # do not log the content
-    result['header'] = '' # do not log headers
-    common.log(json.dumps(result))
-    dialogError("Error", message)
+def index():
+    if login():
+        addDir(translation(30002), webMovies + "/MyList?leid=595&link=seeall", 'listMyVideos', "")
+        xbmcplugin.endOfDirectory(pluginhandle)
 
 
 def login():
     result = common.fetchPage({'link': webSignin})
-    
+
     if result["status"] != 200:
         dialogErrorResult("Unable to connect to Netflix")
         return False
@@ -109,22 +111,22 @@ def login():
     if result['new_url'].startswith(webMovies):
         # We are already logged in and were redirected to the homepage
         return True
-    
+
     form = common.parseDOM(result['content'], "form", attrs = {'id': 'login-form'})
     ret = common.parseDOM(form, "input", attrs = {"type": "hidden", "name": "authURL"}, ret = "value")
     if not ret:
         #TODO: this is not a login page and I do not know what to do
         dialogErrorResult(result, "Unknown Error [noform]")
         return False
-    
+
     authUrl = ret[0]
-    fh = common.openFile(authFile, "w")
-    fh.write(authUrl)
+    fh = common.openFile(authFile, u"wb")
+    fh.write(common.makeAscii(authUrl))
     fh.close()
-    
+
     # Lets try to login
     result = common.fetchPage({"link": webSignin, "post_data": {"authURL": authUrl, "email": username, "password": password, "RememberMe": "on"}})
-        
+
     if result["status"] != 200:
         dialogErrorResult("Unable to connect to Netflix")
         return False
@@ -155,16 +157,61 @@ def login():
     return False
 
 
+def listMyVideos(url):
+    result = common.fetchPage({"link": url})
+
+    if result["status"] != 200:
+        dialogErrorResult("Unable to connect to Netflix")
+        return False
+
+    if not 'id="page-MyList"' in result['content']:
+        if 'id="page-LOGIN"' in result['content']:
+            if not login():
+                return False
+            return listMyVideos(url)
+
+        if 'id="page-ProfilesGate"' in result['content']:
+            if not chooseProfile(result['content']):
+                return False
+            return listMyVideos(url)
+
+        dialogErrorResult(result, "Unexpected content on myList page")
+        return False
+
+    xbmcplugin.setContent(pluginhandle, "movies")
+
+    gallery = common.parseDOM(result['content'], "div", attrs = {'class': 'agMovie agMovie-lulg'})
+
+    for item in gallery:
+        poster = common.parseDOM(item, "img", ret = 'src')[0]
+        name = common.parseDOM(item, "img", ret = 'alt')[0]
+        playLink = common.parseDOM(item, "a", ret = 'href')[0]
+        videoId = common.parseDOM(item, "a", ret = 'id')[0][2:-2]
+        #videoInfo = getVideoInfo(videoId, name, poster, playLink)
+
+        addDir(name, rewritePlayLink(playLink, "movie"), "playVideo", poster)
+
+    xbmcplugin.endOfDirectory(pluginhandle)
+    return True
+
+
+def playVideo(url):
+    xbmc.Player().stop()
+    xbmc.executebuiltin('XBMC.StartAndroidActivity("com.netflix.mediaclient", "android.intent.action.VIEW", "", "' + url + '")')
+
+
+# Helpers
+
 def chooseProfile(content = False):
     if not content:
         result = common.fetchPage({"link": webProfilesGate + "?nextpage=http%3A%2F%2Fmovies.netflix.com%2FDefault"})
-    
+
         if result["status"] != 200:
             dialogErrorResult("Unable to connect to Netflix")
             return False
-            
+
         content = result['content'];
-    
+
     match = re.compile('"profileName":"(.+?)".+?token":"(.+?)"', re.DOTALL).findall(content)
     profiles = []
     tokens = []
@@ -178,25 +225,34 @@ def chooseProfile(content = False):
         # Profile selection isn't remembered, so it has to be executed before every requests (setProfile)
         # If you know a solution for this, please let me know
         # opener.open("https://api-global.netflix.com/desktop/account/profiles/switch?switchProfileGuid="+token)
-        fh = common.openFile(profileFile, 'w')
-        fh.write(token)
+        fh = common.openFile(profileFile, u'wb')
+        fh.write(common.makeAscii(token))
         fh.close()
         cookiejar.save(cookieFile)
         return True
-        
+
     dialogError("Error", "No profiles found")
     return False
 
 
-
-def index():
-    if login():
-        addDir(translation(30002), webMovies + "/MyList?leid=595&link=seeall", 'myList', "")
-        xbmcplugin.endOfDirectory(pluginhandle)
+def translation(id):
+    return addon.getLocalizedString(id).encode('utf-8')
 
 
-def addDir(name, url, mode, iconimage):
-    u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)+"&thumb="+str(iconimage)
+def dialogError(title, message):
+    dialog = xbmcgui.Dialog()
+    dialog.ok(title, message[:53], message[53:110], message[110:])
+
+
+def dialogErrorResult(result, message):
+    result['content'] = '' # do not log the content
+    result['header'] = '' # do not log headers
+    common.log(json.dumps(result))
+    dialogError("Error", message)
+
+
+def addDir(name, url, action, iconimage):
+    u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&action="+str(action)+"&thumb="+str(iconimage)
     ok = True
     liz = xbmcgui.ListItem(name, iconImage="DefaultTVShows.png", thumbnailImage=iconimage)
     liz.setInfo(type="video", infoLabels={"title": name})
@@ -210,4 +266,94 @@ def addDir(name, url, mode, iconimage):
     return ok
 
 
-index()
+def deleteCookies():
+    if os.path.exists(cookieFile):
+        os.remove(cookieFile)
+
+
+def deleteCache():
+    if os.path.exists(cacheFolder):
+        try:
+            shutil.rmtree(cacheFolder)
+        except:
+            shutil.rmtree(cacheFolder)
+
+
+def getParameters(parameterString):
+    common.log("", 5)
+    commands = {}
+    splitCommands = parameterString[parameterString.find('?') + 1:].split('&')
+
+    for command in splitCommands:
+        if (len(command) > 0):
+            splitCommand = command.split('=')
+            key = splitCommand[0]
+            try:
+                value = urllib.unquote_plus(splitCommand[1])
+            except Exception:
+                value = ""
+
+            commands[key] = value
+
+    common.log(repr(commands), 5)
+    return commands
+
+
+def getVideoInfo(videoId, name, poster, playLink):
+    cacheFile = os.path.join(cacheFolder, videoID+".cache")
+    if os.path.exists(cacheFile):
+        fh = common.openFile(cacheFile, 'r')
+        content = json.load(fh)
+        fh.close()
+        return content
+
+    trkid = getParameters(playLink)['trkid']
+    result = common.fetchPage({
+             "link": webMovies + "?ibob=true&authURL=" + authUrl + "&movieid=" + videoId + "&trkid=" + trkid,
+             "header": [["X-Requested-With", "XMLHttpRequest"]]
+             })
+
+    if result["status"] != 200:
+        dialogErrorResult("Unable to connect to Netflix")
+        return False
+
+    content = result['content']
+    fh = open(cacheFile, 'w')
+    fh.write(content)
+    fh.close()
+
+    return content
+
+
+def rewritePlayLink(url, videoType):
+    params = getParameters(url)
+    
+    if videoType == 'movie':
+        videoPath = nflxPathMovies
+    elif videoType == 'tv':
+        videoPath = nflxPathShows
+    else:
+        xbmc.executebuiltin('XBMC.Notification("Error:","Unknown video type",5000)')
+        return ""
+    
+    query = "action=" + nflxActionPlay + "&" + nflxParamMovieId + "=" + videoPath + params['movieid'] + "&" + nflxParamTargetId + "=" + params['tctx']
+    
+    return nflxPath + urllib.quote_plus(query)
+
+
+
+# no more methods
+
+params = getParameters(sys.argv[2])
+action = params.get('action', '')
+
+common.log(sys.argv[2])
+common.log(json.dumps(params))
+
+if action == 'listMyVideos':
+    listMyVideos(params['url'])
+elif action == 'playVideo':
+    playVideo(params['url'])
+else:
+    index()
+

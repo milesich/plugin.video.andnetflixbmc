@@ -99,7 +99,7 @@ while (username == "" or password == ""):
 def index():
 	xbmc.log(msg='index', level=xbmc.LOGDEBUG)
     if login():
-        addDir(translation(30002), urlMain+"/MyList?leid=595&link=seeall", 'listVideos', "")
+        addDir(translation(30002), urlMain+"/MyList?leid=595&link=subnav", 'listVideos', "")
         addDir(translation(30010), "", 'listViewingActivity', "")
         addDir(translation(30003), urlMain+"/WiRecentAdditionsGallery?nRR=releaseDate&nRT=all&pn=1&np=1&actionMethod=json", 'listVideos', "")
         addDir(translation(30004), urlMain+"/WiHD?dev=PC&pn=1&np=1&actionMethod=json", 'listVideos', "")
